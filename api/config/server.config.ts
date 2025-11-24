@@ -1,8 +1,7 @@
 import { resolve } from "path";
 import { z } from "zod";
 
-import { databaseConfig } from "./database.config";
-import { objectStorageConfig } from "./object-storage.config";
+import { databaseConfig, objectStorageConfig } from "./databases/";
 
 const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
@@ -17,7 +16,6 @@ const envSchema = z.object({
 });
 
 const parsed = envSchema.parse(process.env);
-
 
 export const config = {
   ...parsed,

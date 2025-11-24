@@ -17,9 +17,11 @@ Object.assign(process.env, {
 
 const loggerModulePath = new URL("../logger.ts", import.meta.url).pathname;
 const objectStorageModulePath = new URL("../object-storage.service.ts", import.meta.url).pathname;
+const fileServiceModulePath = new URL("../file.service.ts", import.meta.url).pathname;
 
 const actualLoggerModule = await import(loggerModulePath);
 const actualObjectStorageModule = await import(objectStorageModulePath);
+const actualFileServiceModule = await import(fileServiceModulePath);
 
 const logger = {
   debug: mock(() => {}),
@@ -29,7 +31,7 @@ const logger = {
 
 const buildObjectKeyMock = mock((subDir: string, fileName: string) => `${subDir}/${fileName}`);
 const uploadObjectMock = mock(async () => ({ bucket: "uploads", objectKey: "uploads/test.bin" }));
-const getObjectUrlMock = mock(() => "https://storage/uploads/test.bin");
+const createFileRecordMock = mock(async () => {});
 
 mock.module(loggerModulePath, () => ({
   ...actualLoggerModule,
@@ -40,13 +42,21 @@ mock.module(objectStorageModulePath, () => ({
   ...actualObjectStorageModule,
   buildObjectKey: buildObjectKeyMock,
   uploadObject: uploadObjectMock,
-  getObjectUrl: getObjectUrlMock,
+}));
+
+mock.module(fileServiceModulePath, () => ({
+  ...actualFileServiceModule,
+  FileService: class {
+    static createFileRecord = createFileRecordMock;
+  },
 }));
 
 const { TelegramService } = await import("../telegram.service");
 
 const originalFetch = globalThis.fetch;
 const fetchMock = mock<typeof fetch>();
+const originalCrypto = globalThis.crypto;
+const randomUUIDMock = mock(() => "test-uuid");
 
 const createJsonResponse = (body: unknown, init?: ResponseInit) =>
   new Response(JSON.stringify(body), {
@@ -68,17 +78,29 @@ beforeEach(() => {
   fetchMock.mockReset();
   globalThis.fetch = fetchMock as unknown as typeof fetch;
   buildObjectKeyMock.mockReset();
+  buildObjectKeyMock.mockImplementation((subDir: string, fileName: string) => `${subDir}/${fileName}`);
   uploadObjectMock.mockReset();
-  getObjectUrlMock.mockReset();
+  createFileRecordMock.mockReset();
   logger.debug.mockReset();
   logger.info.mockReset();
   logger.error.mockReset();
+  randomUUIDMock.mockReset();
+  randomUUIDMock.mockReturnValue("test-uuid");
+  if (!globalThis.crypto) {
+    globalThis.crypto = { randomUUID: randomUUIDMock as unknown as typeof crypto.randomUUID } as Crypto;
+  } else {
+    globalThis.crypto.randomUUID = randomUUIDMock as unknown as typeof crypto.randomUUID;
+  }
 });
 
 afterAll(() => {
   globalThis.fetch = originalFetch;
   mock.module(loggerModulePath, () => actualLoggerModule);
   mock.module(objectStorageModulePath, () => actualObjectStorageModule);
+  mock.module(fileServiceModulePath, () => actualFileServiceModule);
+  if (originalCrypto) {
+    globalThis.crypto = originalCrypto;
+  }
   restoreEnv();
 });
 
@@ -100,25 +122,21 @@ describe("TelegramService.downloadFile", () => {
       .mockResolvedValueOnce(createJsonResponse(fileInfo))
       .mockResolvedValueOnce(new Response(fileBytes, { headers: { "content-type": "image/png" } }));
 
-    buildObjectKeyMock.mockReturnValue("uploads/nice.png");
-    getObjectUrlMock.mockReturnValue("https://storage/uploads/nice.png");
-
     const result = await TelegramService.downloadFile("abc", "uploads", { preferredFileName: "../nice.png" });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0]?.[0]).toContain("getFile?file_id=abc");
-    expect(buildObjectKeyMock).toHaveBeenCalledWith("uploads", "nice.png");
+    expect(buildObjectKeyMock).toHaveBeenCalledWith("uploads", "test-uuid_id_nice.png");
     expect(uploadObjectMock).toHaveBeenCalledWith({
       data: expect.any(ArrayBuffer),
-      objectKey: "uploads/nice.png",
+      objectKey: "uploads/test-uuid_id_nice.png",
       contentType: "image/png",
     });
-    expect(getObjectUrlMock).toHaveBeenCalledWith("uploads/nice.png");
+    expect(createFileRecordMock).toHaveBeenCalledWith("test-uuid", "7f5df82c-1faa-4ba1-9430-4e9fd82c02fa");
     expect(result).toEqual({
       success: true,
-      path: "uploads/nice.png",
+      path: "uploads/test-uuid_id_nice.png",
       fileName: "nice.png",
-      url: "https://storage/uploads/nice.png",
     });
   });
 
@@ -128,16 +146,18 @@ describe("TelegramService.downloadFile", () => {
       .mockResolvedValueOnce(createJsonResponse(fileInfo))
       .mockResolvedValueOnce(new Response(Uint8Array.from([1, 2, 3]), { headers: { "content-type": "application/pdf" } }));
 
-    buildObjectKeyMock.mockReturnValue("files/custom.bin");
-    getObjectUrlMock.mockReturnValue("https://storage/files/custom.bin");
-
     const result = await TelegramService.downloadFile("file-2", "files", {
       objectNameOverride: "  /override/custom.bin  ",
     });
 
-    expect(buildObjectKeyMock).toHaveBeenCalledWith("files", "custom.bin");
-    expect(uploadObjectMock).toHaveBeenCalledTimes(1);
-    expect(result).toMatchObject({ success: true, fileName: "report.pdf", path: "files/custom.bin" });
+    expect(buildObjectKeyMock).toHaveBeenCalledWith("files", "test-uuid_id_custom.bin");
+    expect(uploadObjectMock).toHaveBeenCalledWith({
+      data: expect.any(ArrayBuffer),
+      objectKey: "files/test-uuid_id_custom.bin",
+      contentType: "application/pdf",
+    });
+    expect(createFileRecordMock).toHaveBeenCalledWith("test-uuid", "7f5df82c-1faa-4ba1-9430-4e9fd82c02fa");
+    expect(result).toMatchObject({ success: true, fileName: "report.pdf", path: "files/test-uuid_id_custom.bin" });
   });
 
   test("propagates Telegram API errors", async () => {
@@ -147,6 +167,7 @@ describe("TelegramService.downloadFile", () => {
 
     expect(result.success).toBe(false);
     expect(uploadObjectMock).not.toHaveBeenCalled();
+    expect(createFileRecordMock).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(logger.error).toHaveBeenCalled();
   });
@@ -161,6 +182,7 @@ describe("TelegramService.downloadFile", () => {
 
     expect(result.success).toBe(false);
     expect(uploadObjectMock).not.toHaveBeenCalled();
+    expect(createFileRecordMock).not.toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalled();
   });
 });

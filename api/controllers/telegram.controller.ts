@@ -26,36 +26,22 @@ export class TelegramController {
 			return;
 		}
 
-		if (message.photo && message.photo.length > 0) {
-			logger.info({ chatId, messageId: message.message_id }, "Processing photo message");
-			await this.handlePhoto(chatId, message);
-			return;
-		}
-
-		if (message.voice) {
-			logger.info({ chatId, messageId: message.message_id }, "Processing voice message");
-			await this.handleVoice(chatId, message);
-			return;
-		}
-
-		if (message.audio) {
-			logger.info({ chatId, messageId: message.message_id }, "Processing audio message");
-			await this.handleAudio(chatId, message);
-			return;
-		}
-
-		if (message.video) {
-			logger.info({ chatId, messageId: message.message_id }, "Processing video message");
-			await this.handleVideo(chatId, message);
-			return;
-		}
-
 		logger.warn({ chatId, messageId: message.message_id }, "Unsupported Telegram message type received");
+		await TelegramService.sendMessage(chatId, "Only PDF documents are supported. Please resend as a PDF file.");
 	}
 
 	private static async handleDocument(chatId: number, message: TelegramMessage) {
 		const document = message.document;
 		if (!document) return;
+
+		if (!this.isPdfDocument(document)) {
+			logger.warn(
+				{ chatId, messageId: message.message_id, mimeType: document.mime_type, fileName: document.file_name },
+				"Rejected non-PDF document",
+			);
+			await TelegramService.sendMessage(chatId, "Only PDF documents can be saved right now. Please send a PDF file.");
+			return;
+		}
 
 		await this.downloadWithFeedback({
 			messageId: message.message_id,
@@ -68,58 +54,12 @@ export class TelegramController {
 		});
 	}
 
-	private static async handlePhoto(chatId: number, message: TelegramMessage) {
-		const photoSizes = message.photo;
-		if (!photoSizes || photoSizes.length === 0) return;
-		const largestPhoto = photoSizes.at(-1);
-		if (!largestPhoto) return;
-		await this.downloadWithFeedback({
-			messageId: message.message_id,
-			chatId,
-			fileId: largestPhoto.file_id,
-			subDir: "photos",
-			startText: "Processing photo...",
-			successText: "Photo saved! 📸",
-		});
-	}
-
-	private static async handleVoice(chatId: number, message: TelegramMessage) {
-		const voice = message.voice;
-		if (!voice) return;
-		await this.downloadWithFeedback({
-			messageId: message.message_id,
-			chatId,
-			fileId: voice.file_id,
-			subDir: "voice",
-			startText: "Processing voice note...",
-			successText: "Voice note saved! 🎤",
-		});
-	}
-
-	private static async handleAudio(chatId: number, message: TelegramMessage) {
-		const audio = message.audio;
-		if (!audio) return;
-		await this.downloadWithFeedback({
-			messageId: message.message_id,
-			chatId,
-			fileId: audio.file_id,
-			subDir: "audio",
-			startText: "Processing audio...",
-			successText: "Audio saved! 🎧",
-		});
-	}
-
-	private static async handleVideo(chatId: number, message: TelegramMessage) {
-		const video = message.video;
-		if (!video) return;
-		await this.downloadWithFeedback({
-			messageId: message.message_id,
-			chatId,
-			fileId: video.file_id,
-			subDir: "videos",
-			startText: "Processing video...",
-			successText: "Video saved! 🎬",
-		});
+	private static isPdfDocument(document: TelegramMessage["document"]): boolean {
+		if (!document) return false;
+		const mimeType = document.mime_type?.toLowerCase() ?? "";
+		if (mimeType === "application/pdf") return true;
+		const fileName = document.file_name?.toLowerCase() ?? "";
+		return fileName.endsWith(".pdf");
 	}
 
 	private static async downloadWithFeedback(args: {

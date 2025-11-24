@@ -1,6 +1,6 @@
 import { defineConfig } from "drizzle-kit";
 
-import { databaseConfig } from "./api/config/database.config";
+import { databaseConfig } from "./api/config/databases/postgres.config";
 
 export default defineConfig({
   dialect: "postgresql",

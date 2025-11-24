@@ -1,7 +1,7 @@
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 
-import { databaseConfig } from "../config/database.config";
+import { databaseConfig } from "../config/databases/postgres.config";
 import * as schema from "./schema";
 
 type GlobalWithDb = typeof globalThis & {

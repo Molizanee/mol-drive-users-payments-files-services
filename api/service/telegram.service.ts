@@ -1,7 +1,8 @@
 import { basename } from "path";
 import { config } from "../config";
 import { logger } from "./logger";
-import { buildObjectKey, getObjectUrl, uploadObject } from "./object-storage.service";
+import { buildObjectKey, uploadObject } from "./object-storage.service";
+import { FileService } from "./file.service";
 
 const API_BASE = `https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}`;
 const FILE_BASE = `https://api.telegram.org/file/bot${config.TELEGRAM_BOT_TOKEN}`;
@@ -24,7 +25,7 @@ export type TelegramFileInfo = {
 };
 
 export type TelegramDownloadResult =
-  | { success: true; path: string; fileName: string; url: string }
+  | { success: true; path: string; fileName: string, url?: string }
   | { success: false; error: unknown };
 
 type TelegramSendMessagePayload = {
@@ -68,7 +69,8 @@ export class TelegramService {
       // Step 2: Download file data and upload to object storage
       const overrideBaseName = options.objectNameOverride ? basename(options.objectNameOverride).trim() : undefined;
       const objectBaseName = overrideBaseName && overrideBaseName.length > 0 ? overrideBaseName : fileName;
-      const objectKey = buildObjectKey(subDir, objectBaseName);
+      const fileUUID = crypto.randomUUID();
+      const objectKey = buildObjectKey(subDir, fileUUID + "_id_" + objectBaseName);
       logger.debug({ fileId, objectKey }, "Resolved Telegram object key");
 
       logger.debug({ fileId, remoteFilePath }, "Starting Telegram download");
@@ -85,10 +87,10 @@ export class TelegramService {
         contentType,
       });
 
-      const objectUrl = getObjectUrl(objectKey);
+      await FileService.createFileRecord(fileUUID, "7f5df82c-1faa-4ba1-9430-4e9fd82c02fa");
 
       logger.info({ fileId, objectKey, fileName }, "Telegram file uploaded to MinIO successfully");
-      return { success: true, path: objectKey, fileName, url: objectUrl };
+      return { success: true, path: objectKey, fileName };
 
     } catch (error) {
       logger.error({ fileId, subDir, err: error }, "Telegram download failed");
